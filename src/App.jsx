@@ -11,7 +11,6 @@ const RacingGame = () => {
   const [winner, setWinner] = useState(null);
 
   const [obstacles, setObstacles] = useState([]);
-  const [botObstacles, setBotObstacles] = useState([]);
 
   const [playerCrashed, setPlayerCrashed] = useState(false);
   const [botCrashed, setBotCrashed] = useState(false);
@@ -67,7 +66,7 @@ const RacingGame = () => {
   };
 
   // =====================================================
-  //               PERFECT AI — FULL VISION
+  //               PERFECT AI — CENTER BIAS
   // =====================================================
   const updateBotPosition = useCallback(() => {
     if (botCrashed) return;
@@ -75,13 +74,14 @@ const RacingGame = () => {
     let x = botXRef.current;
     let y = botYRef.current;
 
-    const BOT_SPEED = 4.2;
+    const BOT_SPEED = 10;
     const LOOKAHEAD_Y = 420;
-    const PREDICT = 110;
+    const PREDICT = 200;
     const GRID = 20;
 
     const leftBoundary = 10;
     const rightBoundary = TRACK_WIDTH - CAR_WIDTH - 10;
+    const TRACK_CENTER = (leftBoundary + rightBoundary) / 2;
 
     const roadWidth = rightBoundary - leftBoundary;
     const slotWidth = roadWidth / GRID;
@@ -89,7 +89,7 @@ const RacingGame = () => {
     // 1. Danger map
     const danger = Array(GRID).fill(0);
 
-    botObstacles.forEach((o) => {
+    obstacles.forEach((o) => {
       const ghostY = o.y + PREDICT;
       const dy = ghostY - y;
 
@@ -114,12 +114,20 @@ const RacingGame = () => {
       return v * 0.6 + (L + R) * 0.2;
     });
 
-    // 3. Find safest slot
+    // 3. Add center bias
+    const CENTER_BIAS = 0.05; // tweak to favor center
+    const smoothedWithCenter = smoothed.map((v, i) => {
+      const slotCenterX = leftBoundary + i * slotWidth + slotWidth / 2;
+      const distanceFromCenter = Math.abs(slotCenterX - TRACK_CENTER);
+      return v + distanceFromCenter * CENTER_BIAS;
+    });
+
+    // 4. Find safest slot
     let bestSlot = 0;
     let bestScore = Infinity;
     for (let i = 0; i < GRID; i++) {
-      if (smoothed[i] < bestScore) {
-        bestScore = smoothed[i];
+      if (smoothedWithCenter[i] < bestScore) {
+        bestScore = smoothedWithCenter[i];
         bestSlot = i;
       }
     }
@@ -127,7 +135,7 @@ const RacingGame = () => {
     const targetX =
       leftBoundary + bestSlot * slotWidth + slotWidth / 2 - CAR_WIDTH / 2;
 
-    // 4. Move bot
+    // 5. Move bot
     const dx = targetX - x;
     if (Math.abs(dx) > 1) {
       x += dx > 0 ? BOT_SPEED : -BOT_SPEED;
@@ -137,7 +145,7 @@ const RacingGame = () => {
 
     botXRef.current = x;
     setBotX(x);
-  }, [botObstacles, botCrashed]);
+  }, [obstacles, botCrashed]);
 
   // =====================================================
   //                      DRAWING
@@ -146,9 +154,11 @@ const RacingGame = () => {
   const drawTrack = (ctx, x, y, obs, crashed, score, isPlayer) => {
     ctx.clearRect(0, 0, TRACK_WIDTH, TRACK_HEIGHT);
 
+    // Background
     ctx.fillStyle = "#000000";
     ctx.fillRect(0, 0, TRACK_WIDTH, TRACK_HEIGHT);
 
+    // Track lines
     ctx.strokeStyle = "rgba(255,255,255,0.3)";
     ctx.lineWidth = 3;
     ctx.setLineDash([10, 20]);
@@ -160,10 +170,12 @@ const RacingGame = () => {
     }
     ctx.setLineDash([]);
 
+    // Track borders
     ctx.fillStyle = "#ff0033";
     ctx.fillRect(0, 0, 2, TRACK_HEIGHT);
     ctx.fillRect(TRACK_WIDTH - 2, 0, 2, TRACK_HEIGHT);
 
+    // Obstacles
     obs.forEach((o) => {
       ctx.fillStyle = "#ff2222";
       ctx.shadowColor = "red";
@@ -172,6 +184,7 @@ const RacingGame = () => {
       ctx.shadowBlur = 0;
     });
 
+    // Car
     ctx.save();
     ctx.fillStyle = crashed ? "#555" : isPlayer ? "#00eefe" : "#ffe600";
     ctx.shadowColor = isPlayer ? "cyan" : "yellow";
@@ -179,6 +192,10 @@ const RacingGame = () => {
     ctx.fillRect(x, y, CAR_WIDTH, CAR_HEIGHT);
     ctx.shadowBlur = 0;
 
+
+
+
+    // Car icon
     ctx.fillStyle = crashed ? "#999" : "#fff";
     ctx.font = "30px monospace";
     ctx.textAlign = "center";
@@ -186,11 +203,12 @@ const RacingGame = () => {
     ctx.fillText(crashed ? "💥" : "▲", x + CAR_WIDTH / 2, y + CAR_HEIGHT / 2);
     ctx.restore();
 
+    // Score bar
     ctx.fillStyle = "rgba(0,255,0,0.6)";
-    ctx.fillRect(2, 2, TRACK_WIDTH - 4, 36);
+    ctx.fillRect(2, 2, TRACK_WIDTH - 4, 48);
     ctx.fillStyle = "#00ff88";
-    ctx.font = "bold 24px monospace";
-    ctx.fillText(score.toString().padStart(6, "0"), TRACK_WIDTH / 2, 20);
+    ctx.font = "bold 32px monospace";
+    ctx.fillText(score.toString().padStart(6, "0"), TRACK_WIDTH / 2, 24);
   };
 
   // =====================================================
@@ -214,18 +232,13 @@ const RacingGame = () => {
 
       updateBotPosition();
 
-      const updatedPlayer = obstacles
+      const updatedObstacles = obstacles
         .map((o) => ({ ...o, y: o.y + OBSTACLE_SPEED }))
         .filter((o) => o.y < TRACK_HEIGHT + 50);
 
-      const updatedBot = botObstacles
-        .map((o) => ({ ...o, y: o.y + OBSTACLE_SPEED }))
-        .filter((o) => o.y < TRACK_HEIGHT + 50);
+      setObstacles(updatedObstacles);
 
-      setObstacles(updatedPlayer);
-      setBotObstacles(updatedBot);
-
-      if (!playerCrashed && checkCollision(playerX, playerY, updatedPlayer)) {
+      if (!playerCrashed && checkCollision(playerX, playerY, updatedObstacles)) {
         setPlayerCrashed(true);
         setTimeout(() => {
           setGameOver(true);
@@ -233,7 +246,7 @@ const RacingGame = () => {
         }, 1500);
       }
 
-      if (!botCrashed && checkCollision(botXRef.current, botYRef.current, updatedBot)) {
+      if (!botCrashed && checkCollision(botXRef.current, botYRef.current, updatedObstacles)) {
         setBotCrashed(true);
         setTimeout(() => {
           setGameOver(true);
@@ -244,14 +257,13 @@ const RacingGame = () => {
       const pCtx = canvasPlayerRef.current.getContext("2d");
       const bCtx = canvasBotRef.current.getContext("2d");
 
-      drawTrack(pCtx, playerX, playerY, updatedPlayer, playerCrashed, playerScore, true);
-      drawTrack(bCtx, botXRef.current, botYRef.current, updatedBot, botCrashed, botScore, false);
+      drawTrack(pCtx, playerX, playerY, updatedObstacles, playerCrashed, playerScore, true);
+      drawTrack(bCtx, botXRef.current, botYRef.current, updatedObstacles, botCrashed, botScore, false);
 
       animationRef.current = requestAnimationFrame(loop);
     };
 
     animationRef.current = requestAnimationFrame(loop);
-
     return () => cancelAnimationFrame(animationRef.current);
   }, [
     gameStarted,
@@ -261,7 +273,6 @@ const RacingGame = () => {
     playerCrashed,
     botCrashed,
     obstacles,
-    botObstacles,
     playerScore,
     botScore,
     updateBotPosition,
@@ -275,25 +286,13 @@ const RacingGame = () => {
     if (!gameStarted || gameOver) return;
 
     obstacleTimer.current = setInterval(() => {
-      setObstacles((p) => [
-        ...p,
-        {
-          x: 10 + Math.random() * (TRACK_WIDTH - 70),
-          y: -80,
-          width: 35 + Math.random() * 25,
-          height: 35 + Math.random() * 25,
-        },
-      ]);
-
-      setBotObstacles((p) => [
-        ...p,
-        {
-          x: 10 + Math.random() * (TRACK_WIDTH - 70),
-          y: -80,
-          width: 35 + Math.random() * 25,
-          height: 35 + Math.random() * 25,
-        },
-      ]);
+      const newObstacle = {
+        x: 10 + Math.random() * (TRACK_WIDTH - 70),
+        y: -80,
+        width: 35 + Math.random() * 25,
+        height: 35 + Math.random() * 25,
+      };
+      setObstacles((p) => [...p, newObstacle]);
     }, 700);
 
     return () => clearInterval(obstacleTimer.current);
@@ -325,7 +324,6 @@ const RacingGame = () => {
     setBotX(180);
     setBotY(400);
     setObstacles([]);
-    setBotObstacles([]);
     setPlayerCrashed(false);
     setBotCrashed(false);
     setPlayerScore(0);
@@ -358,6 +356,10 @@ const RacingGame = () => {
             <h2 className="text-6xl font-mono text-yellow-400 mb-4">
               {winner === "player" ? "YOU WIN!" : "GAME OVER"}
             </h2>
+            <div className="text-2xl font-mono text-white mb-4">
+              <p>Your Score: {playerScore}</p>
+              <p>Bot Score: {botScore}</p>
+            </div>
             <button
               onClick={startGame}
               className="mt-6 bg-green-500 text-black font-bold py-3 px-12 border-4 border-green-300 font-mono"
@@ -369,23 +371,18 @@ const RacingGame = () => {
       )}
 
       <div className="flex gap-8 mt-4">
-        <div className="text-center">
-          <canvas
-            ref={canvasPlayerRef}
-            width={TRACK_WIDTH}
-            height={TRACK_HEIGHT}
-            style={{ border: "4px solid #facc15", imageRendering: "pixelated" }}
-          />
-        </div>
-
-        <div className="text-center">
-          <canvas
-            ref={canvasBotRef}
-            width={TRACK_WIDTH}
-            height={TRACK_HEIGHT}
-            style={{ border: "4px solid #facc15", imageRendering: "pixelated" }}
-          />
-        </div>
+        <canvas
+          ref={canvasPlayerRef}
+          width={TRACK_WIDTH}
+          height={TRACK_HEIGHT}
+          style={{ border: "4px solid #facc15", imageRendering: "pixelated" }}
+        />
+        <canvas
+          ref={canvasBotRef}
+          width={TRACK_WIDTH}
+          height={TRACK_HEIGHT}
+          style={{ border: "4px solid #facc15", imageRendering: "pixelated" }}
+        />
       </div>
     </div>
   );
